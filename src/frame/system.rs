@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
 use cgmath::Matrix4;
-use cgmath::SquareMatrix;
-use cgmath::Vector3;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::CommandBuffer;
 use vulkano::device::Queue;
@@ -13,7 +11,6 @@ use vulkano::framebuffer::RenderPassAbstract;
 use vulkano::framebuffer::Subpass;
 use vulkano::image::AttachmentImage;
 use vulkano::image::ImageAccess;
-use vulkano::image::ImageUsage;
 use vulkano::image::ImageViewAccess;
 use vulkano::sync::GpuFuture;
 use vulkano_text::{DrawText, DrawTextTrait};
@@ -61,7 +58,7 @@ impl FrameSystem {
         &mut self,
         before_future: F,
         final_image: I,
-        depth_buffer: Arc<AttachmentImage>,
+        depth_buffer: &Arc<AttachmentImage>,
         world_to_framebuffer: Matrix4<f32>,
     ) -> Frame
     where
@@ -200,7 +197,7 @@ pub struct TextPass<'f, 's: 'f> {
 
 impl<'f, 's: 'f> TextPass<'f, 's> {
     #[inline]
-    pub fn write(&mut self, text: &String, text_drawer: &mut DrawText, image_num: usize) {
+    pub fn write(&mut self, text: &str, text_drawer: &mut DrawText, image_num: usize) {
         text_drawer.queue_text(
             200.0,
             50.0,

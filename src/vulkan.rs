@@ -1,4 +1,3 @@
-use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::device::{Device, DeviceExtensions, Queue};
 use vulkano::image::SwapchainImage;
 use vulkano::instance;
@@ -10,7 +9,6 @@ use vulkano::swapchain::{Surface, SurfaceTransform, Swapchain};
 use vulkano_win;
 use vulkano_win::VkSurfaceBuild;
 use winit;
-use camera::Camera;
 
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -20,12 +18,10 @@ pub struct Scene<'a> {
     physical: PhysicalDevice<'a>,
     pub device: Arc<Device>,
     pub queue: Arc<Queue>,
-    // command_buffer: AutoCommandBufferBuilder,
     pub events_loop: winit::EventsLoop,
     pub window: Arc<Surface<winit::Window>>,
     pub swapchain: Arc<Swapchain<winit::Window>>,
     pub images: Vec<Arc<SwapchainImage<winit::Window>>>,
-    pub camera: Camera
 }
 
 impl<'a> Scene<'a> {
@@ -33,22 +29,18 @@ impl<'a> Scene<'a> {
         let physical = get_physical_device(&instance);
         let queue_family = get_queue_family(&physical);
         let (device, queue) = initialize_device_and_queues(&physical, queue_family);
-        // let command_buffer = initialize_command_buffer(device.clone(), queue.clone());
-        let (events_loop, window) = initialize_events_loop_and_window(instance.clone());
-        let (swapchain, images) = initialize_swapchain(window.clone(), &physical, device.clone(), queue.clone());
-        let camera = Camera::new();
+        let (events_loop, window) = initialize_events_loop_and_window(&instance);
+        let (swapchain, images) = initialize_swapchain(&window, &physical, &device, &queue);
 
         Scene {
             instance: instance.clone(),
             physical,
             device,
             queue,
-            // command_buffer,
             events_loop,
             window,
             swapchain,
             images,
-            camera
         }
     }
 }
@@ -71,14 +63,14 @@ pub fn initialize_instance() -> Arc<Instance> {
 fn print_layer_list() {
     println!("Vulkan debugging layers available:");
 
-    let mut layers = instance::layers_list().unwrap();
-    while let Some(l) = layers.next() {
+    let layers = instance::layers_list().unwrap();
+    for (_i, l) in layers.enumerate() {
         println!("\t{}", l.name());
     }
 }
 
 fn get_physical_device<'a>(instance: &'a Arc<Instance>) -> PhysicalDevice<'a> {
-    print_device_list(instance.clone());
+    print_device_list(&instance);
 
     // Select first physical device
     let physical = PhysicalDevice::enumerate(&instance)
@@ -94,7 +86,7 @@ fn get_physical_device<'a>(instance: &'a Arc<Instance>) -> PhysicalDevice<'a> {
     physical
 }
 
-fn print_device_list(instance: Arc<Instance>) {
+fn print_device_list(instance: &Arc<Instance>) {
     for (i, physical) in PhysicalDevice::enumerate(&instance).enumerate() {
         println!(
             "Device {}: {} (type: {:?})",
@@ -110,17 +102,15 @@ fn print_device_list(instance: Arc<Instance>) {
 fn get_queue_family<'a>(physical: &'a PhysicalDevice) -> QueueFamily<'a> {
     print_queue_families(physical);
 
-    let queue = physical
+    physical
         .queue_families()
         .find(|&q| {
             q.supports_graphics() // TODO: window supported
         })
-        .expect("Coulnd't find a graphical queue");
-
-    queue
+        .expect("Coulnd't find a graphical queue")
 }
 
-fn print_queue_families<'a>(physical: &'a PhysicalDevice) {
+fn print_queue_families(physical: &PhysicalDevice) {
     println!("Queue families available:");
 
     for (i, queue_family) in physical.queue_families().enumerate() {
@@ -170,13 +160,8 @@ fn initialize_device_and_queues<'a>(
     (device, queue)
 }
 
-fn initialize_command_buffer(device: Arc<Device>, queue: Arc<Queue>) -> AutoCommandBufferBuilder {
-    AutoCommandBufferBuilder::primary(device.clone(), queue.family())
-        .expect("Could not initialize command buffer")
-}
-
 fn initialize_events_loop_and_window(
-    instance: Arc<Instance>,
+    instance: &Arc<Instance>,
 ) -> (winit::EventsLoop, Arc<Surface<winit::Window>>) {
     let events_loop = winit::EventsLoop::new();
     let window = winit::WindowBuilder::new()
@@ -187,10 +172,10 @@ fn initialize_events_loop_and_window(
 }
 
 fn initialize_swapchain<'a>(
-    window: Arc<Surface<winit::Window>>,
+    window: &Arc<Surface<winit::Window>>,
     physical: &'a PhysicalDevice,
-    device: Arc<Device>,
-    queue: Arc<Queue>,
+    device: &Arc<Device>,
+    queue: &Arc<Queue>,
 ) -> (
     Arc<Swapchain<winit::Window>>,
     Vec<Arc<SwapchainImage<winit::Window>>>,
@@ -219,7 +204,7 @@ fn initialize_swapchain<'a>(
             dimensions,
             1,
             caps.supported_usage_flags,
-            &queue,
+            queue,
             SurfaceTransform::Identity,
             alpha,
             PresentMode::Fifo,

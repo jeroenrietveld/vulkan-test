@@ -1,25 +1,31 @@
 use cgmath;
 use cgmath::prelude::*;
-use cgmath::{Deg, Matrix4, Point3, Rad, Vector3, Vector4};
+use cgmath::{Deg, Matrix4, Point3, Rad, Vector3};
 use std;
 use std::ops::Add;
 use std::ops::Sub;
 use winit;
 
 pub struct Camera {
+    position: Vector3<f32>,
+    front: Vector3<f32>,
+    up: Vector3<f32>,
+    right: Vector3<f32>,
+    world_up: Vector3<f32>,
+
+    // TODO: Still needed
     pub projection: Matrix4<f32>,
     pub world: Matrix4<f32>,
-    view: Matrix4<f32>,
-    model: Matrix4<f32>,
-    clip: Matrix4<f32>,
-    pub mvp: Matrix4<f32>,
-    // TODO: find clean way
-    pub zeroes: Matrix4<f32>,
+
+    yaw: f32,
+    pitch: f32,
+
+    movement_speed: f32,
+    zoom: f64,
 }
 
 impl Camera {
     pub fn new() -> Camera {
-        // let projection = cgmath::perspective(Rad(45.0), 1.0, 0.1, 100.0);
         let projection = cgmath::perspective(
             cgmath::Rad(std::f32::consts::FRAC_PI_2),
             {
@@ -30,67 +36,8 @@ impl Camera {
             0.01,
             100.0,
         );
-        let view = cgmath::Matrix4::look_at(
-            cgmath::Point3::new(0.0, 0.0, 5.0),
-            cgmath::Point3::new(0.0, 0.0, 0.0),
-            cgmath::Vector3::new(0.0, 1.0, 0.0),
-        );
-        let world: Matrix4<f32> = <cgmath::Matrix4<f32> as cgmath::SquareMatrix>::identity().into();
-        let mvp = projection * view * world;
+        let world: Matrix4<f32> = <cgmath::Matrix4<f32> as cgmath::SquareMatrix>::identity();
 
-        // let projection = cgmath::perspective(Rad::from(Deg(45.0)), 1.0, 0.1, 100.0);
-        // let view = Matrix4::look_at(
-        //     Point3::new(-5.0f32, 3.0f32, -10.0f32),
-        //     Point3::new(0.0f32, 0.0f32, 0.0f32),
-        //     Vector3::new(0.0f32, -1.0f32, 0.0f32),
-        // );
-        // :let view = Matrix4::look_at(
-        //     Point3::new(0.0f32, 0.0f32, 0.0f32),
-        //     Point3::new(0.0f32, 0.0f32, 0.0f32),
-        //     Vector3::new(0.0f32, 0.0f32, 0.0f32),
-        // );
-        let vector_ones = Vector4::new(1.0f32, 1.0f32, 1.0f32, 1.0f32);
-        let model = Matrix4::from_cols(vector_ones, vector_ones, vector_ones, vector_ones);
-        let vector_zeroes = Vector4::new(0.0f32, 0.0f32, 0.0f32, 0.0f32);
-        let zeroes = Matrix4::from_cols(vector_zeroes, vector_zeroes, vector_zeroes, vector_zeroes);
-        let clip = Matrix4::new(
-            1.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32, -1.0f32, 0.0f32, 0.0f32, 0.0f32, 0.0f32,
-            0.5f32, 0.0f32, 0.0f32, 0.0f32, 0.5f32, 1.0f32,
-        );
-        // let mvp = clip * projection * view * model;
-        println!(
-            "projection: {:?}\n view {:?}\n model {:?}\n clip {:?}\n",
-            projection, view, model, clip
-        );
-
-        Camera {
-            projection,
-            world,
-            view,
-            model,
-            clip,
-            mvp,
-            zeroes,
-        }
-    }
-}
-
-pub struct Camera2 {
-    position: cgmath::Vector3<f32>,
-    front: cgmath::Vector3<f32>,
-    up: cgmath::Vector3<f32>,
-    right: cgmath::Vector3<f32>,
-    world_up: cgmath::Vector3<f32>,
-
-    yaw: f32,
-    pitch: f32,
-
-    movement_speed: f32,
-    zoom: f64,
-}
-
-impl Camera2 {
-    pub fn new() -> Camera2 {
         let position = Vector3::new(0.0, 0.0, 3.0);
         let world_up = Vector3::new(0.0, 1.0, 3.0);
 
@@ -105,7 +52,7 @@ impl Camera2 {
         let right = InnerSpace::normalize(front.cross(world_up));
         let up = InnerSpace::normalize(right.cross(front));
 
-        Camera2 {
+        Camera {
             position,
             world_up,
             front,
@@ -113,6 +60,8 @@ impl Camera2 {
             pitch,
             right,
             up,
+            projection,
+            world,
             movement_speed: 0.5,
             zoom: 45.0,
         }
@@ -137,22 +86,22 @@ impl Camera2 {
                 // Forward
                 println!("Input! forward");
                 self.position = self.position.add(self.front * velocity);
-            },
+            }
             Some(winit::VirtualKeyCode::S) | Some(winit::VirtualKeyCode::Down) => {
                 // Backward
                 println!("Input! backward");
                 self.position = self.position.sub(self.front * velocity);
-            },
+            }
             Some(winit::VirtualKeyCode::A) | Some(winit::VirtualKeyCode::Left) => {
                 // Left
                 println!("Input! left");
                 self.position = self.position.sub(self.right * velocity);
-            },
+            }
             Some(winit::VirtualKeyCode::D) | Some(winit::VirtualKeyCode::Right) => {
                 // Right
                 println!("Input! right");
                 self.position = self.position.add(self.right * velocity);
-            },
+            }
             _ => (),
         };
     }

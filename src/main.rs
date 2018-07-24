@@ -27,27 +27,19 @@ use vulkano::buffer::CpuAccessibleBuffer;
 use vulkano::buffer::CpuBufferPool;
 use vulkano::command_buffer::AutoCommandBufferBuilder;
 use vulkano::command_buffer::DynamicState;
-use vulkano::descriptor::descriptor_set::PersistentDescriptorSet;
 use vulkano::device::Device;
 use vulkano::format::Format;
 use vulkano::framebuffer::Framebuffer;
-use vulkano::framebuffer::RenderPassAbstract;
 use vulkano::framebuffer::Subpass;
 use vulkano::image::AttachmentImage;
-use vulkano::image::ImageUsage;
-use vulkano::instance::Instance;
 use vulkano::pipeline::viewport::Viewport;
 use vulkano::pipeline::GraphicsPipeline;
 use vulkano::pipeline::GraphicsPipelineAbstract;
 use vulkano::swapchain;
 use vulkano::swapchain::AcquireError;
-use vulkano::swapchain::PresentMode;
-use vulkano::swapchain::SurfaceTransform;
-use vulkano::swapchain::Swapchain;
 use vulkano::swapchain::SwapchainCreationError;
 use vulkano::sync::now;
 use vulkano::sync::GpuFuture;
-use vulkano_text::DrawTextTrait;
 
 use vulkano::instance::debug::DebugCallback;
 
@@ -62,7 +54,7 @@ fn main() {
     let instance = vulkan::initialize_instance();
     let mut scene = vulkan::Scene::new(&instance);
 
-    let mut cam = camera::Camera2::new();
+    let mut camera = camera::Camera::new();
 
     let depth_buffer = AttachmentImage::transient(
         scene.device.clone(),
@@ -96,7 +88,7 @@ fn main() {
 
     let sub_pass = Subpass::from(render_pass.clone(), 0).unwrap();
 
-    let (vs, fs) = create_shader_modules(scene.device.clone());
+    let (vs, fs) = create_shader_modules(&scene.device);
 
     let mut framebuffers: Option<Vec<Arc<vulkano::framebuffer::Framebuffer<_, _>>>> = None;
 
@@ -160,7 +152,6 @@ fn main() {
         ) as Arc<_>
     };
 
-    let mvp = scene.camera.projection * cam.view_matrix() * scene.camera.world;
     let uniform_buffer_pool: CpuBufferPool<vs::ty::bufferVals> =
         CpuBufferPool::uniform_buffer(scene.device.clone());
     let mut ds_pool =
@@ -181,7 +172,7 @@ fn main() {
     );
 
     // Frame system
-    // let mut frame_system = frame::FrameSystem::new(scene.queue.clone(), scene.swapchain.format());
+    let mut frame_system = frame::FrameSystem::new(scene.queue.clone(), scene.swapchain.format());
 
     loop {
         previous_frame_end.cleanup_finished();
@@ -245,124 +236,79 @@ fn main() {
 
         let [width, height] = scene.images[0].dimensions();
 
-        let mvp = scene.camera.projection * cam.view_matrix() * scene.camera.world;
-        let uniform_buffer = uniform_buffer_pool.next(vs::ty::bufferVals { mvp: mvp.into() }).unwrap();
-        let descriptor_set = ds_pool.next().add_buffer(uniform_buffer).unwrap().build().unwrap();
+        let future = previous_frame_end.join(acquire_future);
 
-        text_drawer.queue_text(
-            200.0,
-            50.0,
-            20.0,
-            [1.0, 1.0, 1.0, 1.0],
-            &format!(
-                "Reander time: {} ms ({} FPS)",
-                fps.average_render_time(),
-                fps.current_fps()
-            ),
-
+        let mut frame = frame_system.frame(
+            future,
+            scene.images[image_num].clone(),
+            &depth_buffer,
+            Matrix4::identity(),
         );
+        let mut after_future = None;
+        while let Some(pass) = frame.next_pass() {
+            match pass {
+                frame::Pass::Deferred(mut draw_pass) => {
+                    let mvp = camera.projection * camera.view_matrix() * camera.world;
+                    let uniform_buffer = uniform_buffer_pool
+                        .next(vs::ty::bufferVals { mvp: mvp.into() })
+                        .unwrap();
+                    let descriptor_set = ds_pool
+                        .next()
+                        .add_buffer(uniform_buffer)
+                        .unwrap()
+                        .build()
+                        .unwrap();
 
-        let mut command_buffer = AutoCommandBufferBuilder::primary_one_time_submit(
-            scene.device.clone(),
-            scene.queue.family(),
-        ).unwrap()
-            .begin_render_pass(
-                framebuffers.as_ref().unwrap()[image_num].clone(),
-                false,
-                vec![[0.0, 0.0, 0.0, 0.0].into(), 1.0f32.into()],
-            )
-            .unwrap()
-            .draw(
-                pipeline.clone(),
-                DynamicState {
-                    viewports: Some(vec![Viewport {
-                        origin: [0.0, 0.0],
-                        dimensions: [width as f32, height as f32],
-                        depth_range: 0.0..1.0,
-                    }]),
-                    ..DynamicState::none()
-                },
-                vec![vertex_buffer.clone()],
-                descriptor_set,
-                (),
-            )
-            .unwrap()
-            .end_render_pass()
-            .unwrap()
-            .draw_text(&mut text_drawer, image_num)
-            .build().unwrap();
+                    let cb = AutoCommandBufferBuilder::secondary_graphics(
+                        scene.queue.device().clone(),
+                        scene.queue.family(),
+                        pipeline.clone().subpass(),
+                    ).unwrap()
+                        .draw(
+                            pipeline.clone(),
+                            DynamicState {
+                                viewports: Some(vec![Viewport {
+                                    origin: [0.0, 0.0],
+                                    dimensions: [width as f32, height as f32],
+                                    depth_range: 0.0..1.0,
+                                }]),
+                                ..DynamicState::none()
+                            },
+                            vec![vertex_buffer.clone()],
+                            descriptor_set,
+                            (),
+                        )
+                        .unwrap()
+                        .build()
+                        .unwrap();
 
-        let future = previous_frame_end.join(acquire_future)
-            .then_execute(scene.queue.clone(), command_buffer).unwrap()
+                    draw_pass.execute(cb);
+                }
+                frame::Pass::Text(mut text_pass) => {
+                    text_pass.write(
+                        &format!(
+                            "Render time: {} ms ({} FPS)",
+                            fps.average_render_time(),
+                            fps.current_fps()
+                        ),
+                        &mut text_drawer,
+                        image_num,
+                    );
+                }
+                frame::Pass::Finished(af) => {
+                    after_future = Some(af);
+                }
+                _ => {}
+            }
+        }
+
+        let after_frame = after_future
+            .unwrap()
             .then_swapchain_present(scene.queue.clone(), scene.swapchain.clone(), image_num)
-            .then_signal_fence_and_flush().unwrap();
+            .then_signal_fence_and_flush()
+            .unwrap();
 
-//         let mut frame =
-//             frame_system.frame(future, scene.images[image_num].clone(), depth_buffer.clone(), Matrix4::identity());
-//         let mut
-// after_future = None;
-//         while let Some(pass) = frame.next_pass() {
-//             match pass {
-//                 frame::Pass::Deferred(mut draw_pass) => {
-//                     let mvp = scene.camera.projection * cam.view_matrix() * scene.camera.world;
-//                     let uniform_buffer = uniform_buffer_pool
-//                         .next(vs::ty::bufferVals { mvp: mvp.into() })
-//                         .unwrap();
-//                     let descriptor_set = ds_pool
-//                         .next()
-//                         .add_buffer(uniform_buffer)
-//                         .unwrap()
-//                         .build()
-//                         .unwrap();
-
-//                     let cb = AutoCommandBufferBuilder::secondary_graphics(
-//                         scene.queue.device().clone(),
-//                         scene.queue.family(),
-//                         pipeline.clone().subpass(),
-//                     ).unwrap()
-//                         .draw(
-//                             pipeline.clone(),
-//                             DynamicState {
-//                                 viewports: Some(vec![Viewport {
-//                                     origin: [0.0, 0.0],
-//                                     dimensions: [width as f32, height as f32],
-//                                     depth_range: 0.0..1.0,
-//                                 }]),
-//                                 ..DynamicState::none()
-//                             },
-//                             vec![vertex_buffer.clone()],
-//                             descriptor_set,
-//                             (),
-//                         )
-//                         .unwrap()
-//                         .build()
-//                         .unwrap();
-
-//                     draw_pass.execute(cb);
-//                 },
-//                 frame::Pass::Text(mut text_pass) => {
-//                     text_pass.write(
-//                         &format!(
-//                             "Reander time: {} ms ({} FPS)",
-//                             fps.average_render_time(),
-//                             fps.current_fps()
-//                         ),
-//                         &mut text_drawer, image_num);
-//                 },
-//                 frame::Pass::Finished(af) => {
-//                     after_future = Some(af);
-//                 },
-//                 _ => { }
-//             }
-//         }
-
-        // let after_frame = after_future
-        //     .unwrap()
-        //     .then_swapchain_present(scene.queue.clone(), scene.swapchain.clone(), image_num)
-        //     .then_signal_fence_and_flush()
-        //     .unwrap();
-
-        previous_frame_end = Box::new(future) as Box<_>;
+        previous_frame_end = Box::new(after_frame) as Box<_>;
 
         fps.end_frame();
 
@@ -382,7 +328,7 @@ fn main() {
             winit::Event::WindowEvent {
                 event: winit::WindowEvent::KeyboardInput { input, .. },
                 ..
-            } => cam.handle_input(&input, fps.average_render_time() as f32 / 1000.0),
+            } => camera.handle_input(&input, fps.average_render_time() as f32 / 1000.0),
             _ => (),
         });
 
@@ -392,11 +338,11 @@ fn main() {
     }
 }
 
-fn create_shader_modules(device: Arc<Device>) -> (vs::Shader, fs::Shader) {
+fn create_shader_modules(device: &Arc<Device>) -> (vs::Shader, fs::Shader) {
     let vs = vs::Shader::load(device.clone()).expect("Could not create shader module");
     let fs = fs::Shader::load(device.clone()).expect("Could not create shader module");
 
-    return (vs, fs);
+    (vs, fs)
 }
 
 mod vs {
